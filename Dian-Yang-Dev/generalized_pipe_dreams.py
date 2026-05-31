@@ -28,7 +28,7 @@ A cross at cell (r, c) contributes the simple transposition
 
 from __future__ import annotations
 
-from collections import deque
+from collections import deque, defaultdict
 from itertools import combinations
 from typing import FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
@@ -160,6 +160,40 @@ def reading_word(D: PipeDream, n: int) -> List[int]:
     """
     return [cell_generator(cell) for cell in reading_cells(D, n)]
 
+def pipe_pairs_at_cells(D: PipeDream, n: int) -> dict[Cell, tuple[int, int]]:
+    """
+    For every tile in the staircase, find which two pipe labels meet there.
+
+    The pair is stored in sorted order, so pipes (2, 5) and (5, 2)
+    are treated as the same pair.
+
+    We scan the staircase in reading order:
+        rows top to bottom,
+        each row right to left.
+
+    At a crossed tile, the two pipes swap.
+    At an elbow tile, the two pipes do not swap.
+    """
+    check_pipe_dream_cells(D, n)
+
+    pipe_order = list(range(1, n + 1))
+    pair_at_cell: dict[Cell, tuple[int, int]] = {}
+
+    for r in range(n - 1):
+        for c in range(n - 2 - r, -1, -1):
+            cell = (r, c)
+            k = cell_generator(cell)
+
+            pipe_a = pipe_order[k - 1]
+            pipe_b = pipe_order[k]
+
+            pair_at_cell[cell] = tuple(sorted((pipe_a, pipe_b)))
+
+            if cell in D:
+                pipe_order[k - 1], pipe_order[k] = pipe_order[k], pipe_order[k - 1]
+
+    return pair_at_cell
+
 
 # ---------------------------------------------------------------------
 # pipe permutation
@@ -238,250 +272,62 @@ def top_pipe_dream(w: Sequence[int]) -> PipeDream:
 
     return frozenset(crosses)
 
-
-# ---------------------------------------------------------------------
-# Rectangle helpers for generalized chute moves
-# ---------------------------------------------------------------------
-
-def rectangle_cells(r1: int, r2: int, c1: int, c2: int) -> List[Cell]:
-    """
-    Return all cells in the rectangle [r1, r2] x [c1, c2].
-    """
-    return [
-        (r, c)
-        for r in range(r1, r2 + 1)
-        for c in range(c1, c2 + 1)
-    ]
-
-
-def rectangle_inside_staircase(r1: int, r2: int, c1: int, c2: int, n: int) -> bool:
-    """
-    Return True if the whole rectangle lies inside the staircase.
-    """
-    for r in range(r1, r2 + 1):
-        for c in range(c1, c2 + 1):
-            if not valid_cell((r, c), n):
-                return False
-
-    return True
-
-
-# ---------------------------------------------------------------------
-# Generalized chute moves
-# ---------------------------------------------------------------------
-
-def generalized_chute_neighbors(
+#Helper for moves
+def same_pipe_pair_toggle_neighbors(
     D: PipeDream,
     n: int,
     *,
-    verify_permutation: bool = True,
-) -> Iterator[PipeDream]:
+    include_chute: bool = True,
+    include_double: bool = True,
+    verify_permutation: bool = False,
+):
     """
-    Generate generalized chute move neighbors.
+    Generate both generalized chute moves and double-cross flips.
 
-    We choose a rectangle with corners:
-
-        NW = (r1, c1)
-        NE = (r1, c2)
-        SW = (r2, c1)
-        SE = (r2, c2)
-
-    with r1 < r2 and c1 < c2.
-
-    The move sends a cross from NE to SW.
-
-    More precisely, before the move:
-
-        - NW is empty
-        - SW is empty
-        - NE is crossed
-        - all cells in the rectangle except NW, SW, and SE are crossed
-        - SE may be empty or crossed
-
-    Then NE is changed to empty and SW is changed to crossed.
-
-    If verify_permutation is True, this function only yields moves that
-    preserve the ordinary pipe permutation.
+    same pipe pair + different statuses = generalized chute move
+    same pipe pair + same statuses      = double-cross flip
     """
-    check_pipe_dream_cells(D, n)
-
     Dset = set(D)
     base_perm = pipe_permutation(D, n) if verify_permutation else None
 
-    for r1 in range(n - 1):
-        for r2 in range(r1 + 1, n - 1):
-            for c1 in range(n - 1):
-                for c2 in range(c1 + 1, n - 1):
-                    if not rectangle_inside_staircase(r1, r2, c1, c2, n):
-                        continue
+    pair_at_cell = pipe_pairs_at_cells(D, n)
 
-                    NW = (r1, c1)
-                    NE = (r1, c2)
-                    SW = (r2, c1)
-                    SE = (r2, c2)
+    cells_by_pair = defaultdict(list)
 
-                    if NW in Dset:
-                        continue
+    for cell, pair in pair_at_cell.items():
+        cells_by_pair[pair].append(cell)
 
-                    if SW in Dset:
-                        continue
-
-                    if NE not in Dset:
-                        continue
-
-                    ok = True
-
-                    for cell in rectangle_cells(r1, r2, c1, c2):
-                        if cell in {NW, SW, SE}:
-                            continue
-
-                        if cell not in Dset:
-                            ok = False
-                            break
-
-                    if not ok:
-                        continue
-
-                    newD = set(Dset)
-                    newD.remove(NE)
-                    newD.add(SW)
-
-                    E = frozenset(newD)
-
-                    if verify_permutation and pipe_permutation(E, n) != base_perm:
-                        continue
-
-                    yield E
-
-
-def inverse_generalized_chute_neighbors(
-    D: PipeDream,
-    n: int,
-    *,
-    verify_permutation: bool = True,
-) -> Iterator[PipeDream]:
-    """
-    Generate inverse generalized chute move neighbors.
-
-    This reverses generalized_chute_neighbors.
-
-    It sends a cross from SW back to NE.
-    """
-    check_pipe_dream_cells(D, n)
-
-    Dset = set(D)
-    base_perm = pipe_permutation(D, n) if verify_permutation else None
-
-    for r1 in range(n - 1):
-        for r2 in range(r1 + 1, n - 1):
-            for c1 in range(n - 1):
-                for c2 in range(c1 + 1, n - 1):
-                    if not rectangle_inside_staircase(r1, r2, c1, c2, n):
-                        continue
-
-                    NW = (r1, c1)
-                    NE = (r1, c2)
-                    SW = (r2, c1)
-                    SE = (r2, c2)
-
-                    if NW in Dset:
-                        continue
-
-                    if NE in Dset:
-                        continue
-
-                    if SW not in Dset:
-                        continue
-
-                    ok = True
-
-                    for cell in rectangle_cells(r1, r2, c1, c2):
-                        if cell in {NW, NE, SE}:
-                            continue
-
-                        if cell not in Dset:
-                            ok = False
-                            break
-
-                    if not ok:
-                        continue
-
-                    newD = set(Dset)
-                    newD.remove(SW)
-                    newD.add(NE)
-
-                    E = frozenset(newD)
-
-                    if verify_permutation and pipe_permutation(E, n) != base_perm:
-                        continue
-
-                    yield E
-
-
-# ---------------------------------------------------------------------
-# Double-cross flips
-# ---------------------------------------------------------------------
-
-def double_cross_flip_neighbors(
-    D: PipeDream,
-    n: int,
-    *,
-    verify_permutation: bool = True,
-) -> Iterator[PipeDream]:
-    """
-    Generate double-cross flip neighbors.
-
-    A double-cross flip changes 2 tiles at once.
-
-    It allows:
-
-        two elbows  -> two crosses
-
-    and the reverse:
-
-        two crosses -> two elbows
-
-    This implementation is computational:
-    it tries every pair of cells and keeps only the pairs that preserve
-    the ordinary pipe permutation.
-
-    That means it is safe for correctness, although not the fastest
-    possible implementation.
-    """
-    check_pipe_dream_cells(D, n)
-
-    Dset = set(D)
-    cells = staircase_cells(n)
-    base_perm = pipe_permutation(D, n) if verify_permutation else None
-
-    for cell1, cell2 in combinations(cells, 2):
-        cell1_crossed = cell1 in Dset
-        cell2_crossed = cell2 in Dset
-
-        both_empty = not cell1_crossed and not cell2_crossed
-        both_crossed = cell1_crossed and cell2_crossed
-
-        # A double-cross flip should not toggle one crossed cell
-        # and one empty cell. It must change the cross count by +/- 2.
-        if not (both_empty or both_crossed):
+    for pair, cells in cells_by_pair.items():
+        if len(cells) < 2:
             continue
 
-        newD = set(Dset)
+        for cell1, cell2 in combinations(cells, 2):
+            cell1_crossed = cell1 in Dset
+            cell2_crossed = cell2 in Dset
 
-        if both_empty:
-            newD.add(cell1)
-            newD.add(cell2)
+            same_status = cell1_crossed == cell2_crossed
+            different_status = not same_status
 
-        elif both_crossed:
-            newD.remove(cell1)
-            newD.remove(cell2)
+            if different_status and not include_chute:
+                continue
 
-        E = frozenset(newD)
+            if same_status and not include_double:
+                continue
 
-        if verify_permutation and pipe_permutation(E, n) != base_perm:
-            continue
+            newD = set(Dset)
 
-        yield E
+            for cell in (cell1, cell2):
+                if cell in newD:
+                    newD.remove(cell)
+                else:
+                    newD.add(cell)
+
+            E = frozenset(newD)
+
+            if verify_permutation and pipe_permutation(E, n) != base_perm:
+                continue
+
+            yield E
 
 
 # ---------------------------------------------------------------------
@@ -492,38 +338,17 @@ def neighbors(
     D: PipeDream,
     n: int,
     *,
-    include_inverse_chute: bool = True,
-    include_double_cross_flips: bool = True,
-    verify_permutation: bool = True,
-) -> Iterator[PipeDream]:
-    """
-    Generate all selected neighbors of D.
-
-    By default this includes:
-
-        - generalized chute moves
-        - inverse generalized chute moves
-        - double-cross flips
-    """
-    yield from generalized_chute_neighbors(
+    include_chute: bool = True,
+    include_double: bool = True,
+    verify_permutation: bool = False,
+):
+    yield from same_pipe_pair_toggle_neighbors(
         D,
         n,
+        include_chute=include_chute,
+        include_double=include_double,
         verify_permutation=verify_permutation,
     )
-
-    if include_inverse_chute:
-        yield from inverse_generalized_chute_neighbors(
-            D,
-            n,
-            verify_permutation=verify_permutation,
-        )
-
-    if include_double_cross_flips:
-        yield from double_cross_flip_neighbors(
-            D,
-            n,
-            verify_permutation=verify_permutation,
-        )
 
 
 # ---------------------------------------------------------------------
@@ -545,7 +370,6 @@ def all_generalized_pipe_dreams_by_moves(
     *,
     start: Optional[PipeDream] = None,
     max_states: Optional[int] = None,
-    include_inverse_chute: bool = True,
     include_double_cross_flips: bool = True,
     verify_permutation: bool = True,
 ) -> List[PipeDream]:
@@ -601,10 +425,7 @@ def all_generalized_pipe_dreams_by_moves(
 
         for E in neighbors(
             D,
-            n,
-            include_inverse_chute=include_inverse_chute,
-            include_double_cross_flips=include_double_cross_flips,
-            verify_permutation=verify_permutation,
+            n
         ):
             if pipe_permutation(E, n) != target:
                 continue

@@ -173,13 +173,12 @@ def all_reduced_pipe_dreams(w: List[int]) -> List[PipeDream]:
         D = queue.popleft()
 
         for E in chute_neighbors(D, n):
-            # This check is partly defensive. In theory, chute moves preserve perm.
-            if pipe_permutation(E, n) != target:
+            if E in seen:
                 continue
 
-            if E not in seen:
-                seen.add(E)
-                queue.append(E)
+        
+            seen.add(E)
+            queue.append(E)
 
     return list(seen)
 
